@@ -1,6 +1,5 @@
 import pickle
 import numpy as np
-import faiss
 from sentence_transformers import SentenceTransformer
 from groq import Groq
 from fastapi import FastAPI
