@@ -1,31 +1,31 @@
-import pickle
-import numpy as np
-from sentence_transformers import SentenceTransformer
+import json
 from groq import Groq
 from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import List
 from dotenv import load_dotenv
 import os
-from contextlib import asynccontextmanager
 
 load_dotenv()
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-catalog = None
-index = None
-embedder = None
+app = FastAPI()
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    global catalog, index, embedder
-    with open("shl_catalog_data.pkl", "rb") as f:
-        catalog = pickle.load(f)
-    index = faiss.read_index("shl_index.faiss")
-    embedder = SentenceTransformer("all-MiniLM-L6-v2")
-    yield
+with open("shl_catalog.json", "r") as f:
+    catalog = json.load(f)
 
-app = FastAPI(lifespan=lifespan)
+def search_catalog(query: str, top_k: int = 10):
+    query_lower = query.lower()
+    scored = []
+    for item in catalog:
+        score = sum(1 for word in query_lower.split() if word in item["name"].lower())
+        if score > 0:
+            scored.append((score, item))
+    scored.sort(reverse=True, key=lambda x: x[0])
+    results = [item for _, item in scored[:top_k]]
+    if not results:
+        results = catalog[:top_k]
+    return results
 
 class Message(BaseModel):
     role: str
@@ -43,16 +43,6 @@ class ChatResponse(BaseModel):
     reply: str
     recommendations: List[Recommendation]
     end_of_conversation: bool
-
-def search_catalog(query: str, top_k: int = 10):
-    embedding = embedder.encode([query])
-    embedding = np.array(embedding).astype("float32")
-    distances, indices = index.search(embedding, top_k)
-    results = []
-    for idx in indices[0]:
-        if idx < len(catalog):
-            results.append(catalog[idx])
-    return results
 
 @app.get("/health")
 def health():
@@ -79,12 +69,12 @@ Your ONLY job is to help hiring managers find the right SHL assessments.
 
 RULES:
 1. If the FIRST message is vague, ask ONE clarifying question only. Never ask more than one clarifying question total.
-2. After the user answers ANY clarifying question, ALWAYS recommend assessments immediately. Do not ask more questions.
-3. If user refines or changes requirements, update recommendations accordingly.
+2. After the user answers ANY clarifying question, ALWAYS recommend assessments immediately.
+3. If user refines requirements, update recommendations accordingly.
 4. If user asks to compare assessments, explain differences using catalog data only.
 5. NEVER recommend anything outside the catalog below.
 6. REFUSE any off-topic questions politely.
-7. NEVER make up URLs - only use URLs from the catalog below.
+7. NEVER make up URLs.
 
 AVAILABLE ASSESSMENTS:
 {catalog_context}
