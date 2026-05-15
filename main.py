@@ -8,18 +8,25 @@ from pydantic import BaseModel
 from typing import List
 from dotenv import load_dotenv
 import os
+from contextlib import asynccontextmanager
 
 load_dotenv()
-
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-app = FastAPI()
+catalog = None
+index = None
+embedder = None
 
-with open("shl_catalog_data.pkl", "rb") as f:
-    catalog = pickle.load(f)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global catalog, index, embedder
+    with open("shl_catalog_data.pkl", "rb") as f:
+        catalog = pickle.load(f)
+    index = faiss.read_index("shl_index.faiss")
+    embedder = SentenceTransformer("all-MiniLM-L6-v2")
+    yield
 
-index = faiss.read_index("shl_index.faiss")
-embedder = SentenceTransformer("all-MiniLM-L6-v2")
+app = FastAPI(lifespan=lifespan)
 
 class Message(BaseModel):
     role: str
@@ -72,28 +79,25 @@ def chat(request: ChatRequest):
 Your ONLY job is to help hiring managers find the right SHL assessments.
 
 RULES:
-RULES:
 1. If the FIRST message is vague, ask ONE clarifying question only. Never ask more than one clarifying question total.
 2. After the user answers ANY clarifying question, ALWAYS recommend assessments immediately. Do not ask more questions.
 3. If user refines or changes requirements, update recommendations accordingly.
 4. If user asks to compare assessments, explain differences using catalog data only.
 5. NEVER recommend anything outside the catalog below.
-6. REFUSE any off-topic questions (legal advice, general HR advice, etc).
+6. REFUSE any off-topic questions politely.
 7. NEVER make up URLs - only use URLs from the catalog below.
 
-AVAILABLE ASSESSMENTS (from SHL catalog):
+AVAILABLE ASSESSMENTS:
 {catalog_context}
 
-RESPONSE FORMAT INSTRUCTIONS:
-- If you have enough context to recommend: start your reply with "RECOMMEND:"
-- If you need more info: start your reply with "CLARIFY:"
-- If conversation is complete: start with "DONE:"
+RESPONSE FORMAT:
+- If recommending: start with "RECOMMEND:"
+- If clarifying: start with "CLARIFY:"
+- If done: start with "DONE:"
 - If refusing: start with "REFUSE:"
 
-Conversation so far:
-{conversation}
-
-Respond naturally and helpfully. When recommending, mention the assessment names and their URLs from the catalog above."""
+Conversation:
+{conversation}"""
 
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
@@ -103,7 +107,6 @@ Respond naturally and helpfully. When recommending, mention the assessment names
     )
 
     reply_text = response.choices[0].message.content.strip()
-
     recommendations = []
     end_of_conversation = False
 
