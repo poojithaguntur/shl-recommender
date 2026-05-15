@@ -16,16 +16,21 @@ with open("shl_catalog.json", "r") as f:
 
 def search_catalog(query: str, top_k: int = 10):
     query_lower = query.lower()
+    keywords = query_lower.split()
     scored = []
     for item in catalog:
-        score = sum(1 for word in query_lower.split() if word in item["name"].lower())
-        if score > 0:
-            scored.append((score, item))
+        name_lower = item["name"].lower()
+        score = 0
+        for word in keywords:
+            if len(word) > 2:
+                if word in name_lower:
+                    score += 3
+                for part in name_lower.split():
+                    if word in part or part in word:
+                        score += 1
+        scored.append((score, item))
     scored.sort(reverse=True, key=lambda x: x[0])
-    results = [item for _, item in scored[:top_k]]
-    if not results:
-        results = catalog[:top_k]
-    return results
+    return [item for _, item in scored[:top_k]]
 
 class Message(BaseModel):
     role: str
@@ -59,9 +64,9 @@ def chat(request: ChatRequest):
             break
 
     catalog_results = search_catalog(last_user_message, top_k=10)
-    catalog_context = "\n".join([
+    full_catalog_sample = "\n".join([
         f"- {item['name']} (Type: {item['test_type']}) → {item['url']}"
-        for item in catalog_results
+        for item in catalog[:80]
     ])
 
     system_prompt = f"""You are an SHL assessment recommender assistant.
@@ -76,8 +81,8 @@ RULES:
 6. REFUSE any off-topic questions politely.
 7. NEVER make up URLs.
 
-AVAILABLE ASSESSMENTS:
-{catalog_context}
+FULL SHL CATALOG (use ONLY these):
+{full_catalog_sample}
 
 RESPONSE FORMAT:
 - If recommending: start with "RECOMMEND:"
